@@ -1,1 +1,964 @@
-
+{
+  "name": "Proposal Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1SGKW88b2SnUgFV2LKPageoOmZSanXr1I"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "3d3ffd44-7a01-4e80-bc39-11ea986a8b15",
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        288,
+        576
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "I3avsin2lrmduuyF",
+          "name": "Google Drive oAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $json.id }}/export?mimeType=text%2Fplain",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "5f545e2e-56d9-4294-ba9b-66c17988df03",
+      "name": "Get Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        528,
+        576
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "I3avsin2lrmduuyF",
+          "name": "Google Drive oAuth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get trigger data and transcript\nconst triggerData = $('Google Drive Trigger').first().json;\nconst fileName = triggerData.name || '';\nconst transcriptText = $input.first().json.data || '';\n\n// 1. Extract company/business name from filename\nlet company = '';\nif (fileName.includes(' x ')) {\n  company = fileName.split(' x ')[0]\n    .replace(/^(Project Scope|Meeting Notes|Discovery Call|Transcript|Proposal|Call Notes|Brief|Scope)\\s+/i, '')\n    .trim();\n} else if (fileName.includes(' - ')) {\n  company = (fileName.split(' - ')[1] || '').trim();\n}\n\n// 2. Extract speaker names from transcript (format: \"Name  0:00\")\nconst speakers = [];\nconst lines = transcriptText.split('\\n');\nfor (const line of lines) {\n  const match = line.match(/^([A-Za-z]+(?:\\s+[A-Za-z]+)+)\\s+\\d+:\\d+/);\n  if (match) {\n    const speaker = match[1].trim();\n    if (!/jack\\s+ramsey/i.test(speaker) &&\n        !/unknown\\s+speaker/i.test(speaker) &&\n        !/^speaker\\s*\\d*$/i.test(speaker)) {\n      if (!speakers.includes(speaker)) {\n        speakers.push(speaker);\n      }\n    }\n  }\n}\n\n// 3. Build CRM filter: search Business Name (title) for company, Contact Person (rich_text) for ALL speakers\nconst filterConditions = [];\nif (company) {\n  filterConditions.push({property: 'Business Name', title: {contains: company}});\n}\nfor (const speaker of speakers) {\n  filterConditions.push({property: 'Contact Person', rich_text: {contains: speaker}});\n}\nif (filterConditions.length === 0) {\n  filterConditions.push({property: 'Business Name', title: {contains: fileName}});\n}\nconst crmFilter = JSON.stringify({or: filterConditions});\n\n// 4. clientName = first speaker found (for display/proposal), company for business\nconst clientName = speakers[0] || company || fileName;\n\nreturn [{\n  json: {\n    clientName: clientName,\n    company: company,\n    speakers: speakers,\n    crmFilter: crmFilter,\n    meetingDate: new Date().toISOString().split('T')[0],\n    transcriptText: transcriptText,\n    fileId: triggerData.id,\n    fileName: fileName\n  }\n}];"
+      },
+      "id": "80d3622c-bb63-4481-b3b6-4dd6e7b95e9c",
+      "name": "Extract Client Name",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "297e4600daf680fdadbbcabc60de8ee6"
+        },
+        "limit": 1,
+        "filterType": "json",
+        "filterJson": "={{ $('Extract Client Name').item.json.crmFilter }}",
+        "options": {}
+      },
+      "id": "84fa3457-cbef-4ac2-8214-4f5c253e1e44",
+      "name": "Query CRM",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        304,
+        992
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "fw16zwh6e1yQzISu",
+          "name": "Notion CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.property_email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "cond-2",
+              "leftValue": "={{ $json.property_business_name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d76b1dc1-5293-4b35-a630-369cbc1b6b3e",
+      "name": "Has Complete Info?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": []
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "1d4fadfd-8f2c-4566-9aab-a9897a6fcec8",
+      "name": "CRM Data Ready",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1440,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AECGZ65RB",
+          "mode": "list",
+          "cachedResultName": "all-asero"
+        },
+        "text": "=:warning: *Missing CRM Data*\n\nA new transcript was uploaded for *{{ $(\"Extract Client Name\").item.json.company || $(\"Extract Client Name\").item.json.clientName }}* but the CRM record is missing required information (company name and/or email).\n\nPlease fill in the missing details using the link below:\n{{ $execution.resumeFormUrl }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "452a345b-8711-45fd-a27d-9e5a3c6ef7f5",
+      "name": "Send Alert - Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        704,
+        1056
+      ],
+      "webhookId": "a58bf4ba-7e4e-4f4f-989b-ccc280c37028",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "WfEsS1JaedsOnFF7",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Complete Client Information",
+        "formDescription": "=Please provide the missing CRM data for <strong>{{ $('Extract Client Name').item.json.clientName }}</strong> so the proposal can be generated.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Company Name",
+              "placeholder": "e.g. Acme Corp",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Contact Email",
+              "fieldType": "email",
+              "placeholder": "e.g. john@acme.com",
+              "requiredField": true
+            }
+          ]
+        },
+        "limitWaitTime": true,
+        "resumeAmount": 7,
+        "resumeUnit": "days",
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Thank you! The proposal is now being generated automatically."
+            }
+          }
+        }
+      },
+      "id": "7ea2f4fd-34cc-41a4-9a4f-d37431906afe",
+      "name": "Collect Missing Info",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        1056
+      ],
+      "webhookId": "d23e1049-a45d-4dd8-abf0-63e1df90b9f2"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Query CRM').item.json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Business Name|title",
+              "textContent": "={{ $json['Company Name'] }}"
+            },
+            {
+              "key": "Email|email",
+              "emailValue": "={{ $json['Contact Email'] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "08f1a3dc-1548-4fa7-9536-654240c82779",
+      "name": "Update Missing Info",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        1056
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "fw16zwh6e1yQzISu",
+          "name": "Notion CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "297e4600daf680fdadbbcabc60de8ee6"
+        },
+        "limit": 1,
+        "filterType": "json",
+        "filterJson": "={{ $('Extract Client Name').item.json.crmFilter }}",
+        "options": {}
+      },
+      "id": "e3ab5404-5038-4909-9856-053ce443a8b3",
+      "name": "Re-Query CRM",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        1056
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "fw16zwh6e1yQzISu",
+          "name": "Notion CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Proposal: {{ $('Extract Client Name').item.json.company }}",
+        "message": "=<p>Hi,</p>\n<p>Thank you for the great conversation. Please find attached our proposal based on our recent discussion.</p>\n<p>You can also view the full presentation here: <a href=\"https://public-api.gamma.app/v1.0/generations/{{ $('Gamma Deck').item.json.generationId }}\">View Proposal</a></p>\n<p>Please review at your convenience and let me know if you have any questions or would like to discuss further.</p>\n<p>Best regards,<br>Jack</p>",
+        "options": {
+          "sendTo": "={{ $('CRM Data Ready').item.json.property_email }}"
+        }
+      },
+      "id": "a80ca2f5-5d5e-42ac-9438-4ae169d8107a",
+      "name": "Create Email Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        992,
+        1904
+      ],
+      "webhookId": "05a62bf5-b558-459c-a111-8c1f18ec4b00",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "dCZSLGhKLy16oQ7B",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('CRM Data Ready').item.json.id }}"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Status|status",
+              "statusValue": "Active"
+            },
+            {
+              "key": "Proposal Date|date",
+              "date": "={{ $now.toISODate() }}"
+            },
+            {
+              "key": "Proposal URL|url",
+              "urlValue": "=https://public-api.gamma.app/v1.0/generations/{{ $('Gamma Deck').item.json.generationId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "58ff7cde-bf60-4005-b614-07fe57bda450",
+      "name": "Update CRM",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        1904
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "fw16zwh6e1yQzISu",
+          "name": "Notion CRM"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AECGZ65RB",
+          "mode": "list",
+          "cachedResultName": "all-asero"
+        },
+        "message": "=A new transcript has been uploaded: *{{ $('Extract Client Name').item.json.fileName }}*\n\nClient: {{ $('Extract Client Name').item.json.company || $('Extract Client Name').item.json.clientName }}\n\nWould you like a proposal generated?",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "Yes",
+            "disapproveLabel": "No"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        1040,
+        576
+      ],
+      "id": "4de8ae8c-50bd-4b9f-a00d-e04e7478bc61",
+      "name": "Proposal Generation?",
+      "webhookId": "fe8dc6a5-8c4c-4174-b331-4ce691f6e380",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "WfEsS1JaedsOnFF7",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "google/gemini-3-pro-preview",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        304,
+        1632
+      ],
+      "id": "3534a135-1a9d-4507-b956-8a77bed40a31",
+      "name": "OpenRouter",
+      "credentials": {
+        "openRouterApi": {
+          "id": "WCbzc5uXuaM2SO3E",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Transcript:\n\n{{ $('Get Transcript').item.json.data }}",
+        "options": {
+          "systemMessage": "=# Role\nYou are an expert Senior AI Solutions Consultant and Sales Engineer for **Uppit AI**. Your role is to analyze a raw transcript from a discovery or sales call and transform it into a polished, high-converting, client-ready business proposal.\n\n# Objective\nUsing the provided call transcript, generate a comprehensive and persuasive automation or AI proposal. You must extract real pain points, desired outcomes, operational constraints, and technical requirements directly from the conversation and frame them into a clear business narrative that motivates the client to move forward.\n\n# Important Constraints\n- This proposal is fully client facing.\n- Do NOT include follow-up questions, internal notes, or commentary.\n- Do NOT mention automation, AI generation, or that this was system produced.\n- Make confident assumptions when needed and clearly state them as part of the proposal.\n- If specific data is missing, use clear placeholders such as [Estimated Hours Saved] or [Annual Cost].\n\n# Tone and Style\n- Professional, clear, and business focused.\n- Persuasive but grounded in the client’s own language.\n- Empathetic and specific, showing strong listening and understanding.\n- Avoid unnecessary jargon unless the client explicitly used it.\n\n# Required Proposal Structure\nYou must generate the proposal in the exact order below and clearly separate each section with headers.\n\n---\n\n## 1. Proposal Title Page\n**Instruction:** Create a clean title section at the top of the proposal.\n\n**Include:**\n- Proposal title (example: Automation & AI Optimization Proposal)\n- Client company name\n- Prepared for\n- Prepared by: Uppit AI\n- Current date, which is {{ $now.format('yyyy-MM-dd') }}\n\n---\n\n## 2. Executive Summary\n**Instruction:** Summarize the proposal in 3 to 4 concise sentences.\n\n**Must Include:**\n- The core challenge the company is facing\n- The solution Uppit AI is proposing\n- The expected outcome in terms of efficiency, savings, or growth\n\n---\n\n## 3. Problem and Challenge\n**Instruction:** Expand on the problem in more detail.\n\n**Include:**\n- Current state workflows and manual processes\n- Key pain points using the client’s own language when possible\n- Time, cost, or operational impact of these challenges\n- Emotional or organizational impact such as stress, bottlenecks, or inefficiency\n\n---\n\n## 4. Uppit AI Proposed Solution\n**Instruction:** Clearly describe how Uppit AI will solve the problem.\n\n**Include:**\n- A brief recap of the current workflow\n- A detailed description of the future automated or AI-assisted workflow\n- Step-by-step explanation of how the solution operates\n- Mention any tools, platforms, or systems discussed during the call\n\nFocus on workflows and outcomes, not just technology.\n\n---\n\n## 5. Return on Investment\n**Instruction:** Quantify the business value of the solution.\n\n**Include:**\n- Hours saved per day or per week\n- Weekly or monthly operational savings\n- Translation of time savings into annual cost savings\n- Clear assumptions if exact numbers were not provided\n\n---\n\n## 6. Soft and Intangible Benefits\n**Instruction:** Highlight non-financial benefits.\n\n**Examples:**\n- Reduction in human error\n- Improved employee experience and morale\n- Faster response times\n- Increased accuracy and consistency\n- Improved data security or compliance\n\n---\n\n## 7. Implementation Roadmap\n**Instruction:** Provide a clear timeline broken down by weeks or phases.\n\n**Include:**\n- Estimated duration for each phase\n- What is accomplished during each phase\n- Typical phases may include discovery, build, testing, deployment, and training\n\n---\n\n## 8. Success Metrics\n**Instruction:** Define how success will be measured.\n\n**Explicitly State:**\n- What metrics will be tracked\n- Examples include time saved, accuracy, compliance, response time, or throughput\n- How Uppit AI will demonstrate value to stakeholders\n\n---\n\n## 9. Why Choose Uppit AI\n**Instruction:** Advocate for Uppit AI as the right partner.\n\nYou must include the following value proposition verbatim or lightly adapted for flow:\n\n\"Uppit AI has educated over 20 million people around the world, empowering small to medium-sized businesses with superhuman efficiency by building automations that incorporate AI. Our clients have seen ROI within the first two weeks because we do not just build what you think you need. We examine your business operations to understand the constraints you are facing and identify what will deliver the most leverage. Additionally, we utilize hundreds of reusable components from our proprietary library, significantly reducing development time and cost compared to traditional agencies.\"\n\nEnd this section with a confident close that positions Uppit AI as a long-term strategic partner.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        336,
+        1456
+      ],
+      "id": "5edaeba6-b188-40b1-ab2c-9aa41333bb52",
+      "name": "Proposal Generator Agent"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://public-api.gamma.app/v1.0/generations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"inputText\": \"{{ $json.output.replace(/\\n/g, ' ').replace(/\"/g, \"'\") }}\",\n  \"textMode\": \"preserve\",\n  \"format\": \"presentation\",\n  \"themeId\": \"vortex\",\n  \"numCards\": 10,\n  \"cardSplit\": \"auto\",\n  \"additionalInstructions\": \"A professional business proposal\",\n  \"exportAs\": \"pdf\",\n  \"textOptions\": {\n    \"amount\": \"detailed\",\n    \"tone\": \"professional, inspiring\",\n    \"audience\": \"business owner\",\n    \"language\": \"en\"\n  },\n  \"imageOptions\": {\n    \"source\": \"aiGenerated\",\n    \"model\": \"gemini-2.5-flash-image\",\n    \"style\": \"photorealistic\"\n  },\n  \"cardOptions\": {\n    \"dimensions\": \"fluid\",\n    \"headerFooter\": {\n      \"topRight\": {\n        \"type\": \"image\",\n        \"source\": \"themeLogo\",\n        \"size\": \"sm\"\n      },\n      \"bottomRight\": {\n        \"type\": \"cardNumber\"\n      },\n      \"hideFromFirstCard\": true,\n      \"hideFromLastCard\": false\n    }\n  },\n  \"sharingOptions\": {\n    \"workspaceAccess\": \"view\",\n    \"externalAccess\": \"comment\",\n    \"emailOptions\": {\n      \"recipients\": [\"jack.ramsey@asero.ai\"],\n      \"access\": \"comment\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        688,
+        1456
+      ],
+      "id": "b2fa7a02-5d07-4cf6-9d40-ec15165279aa",
+      "name": "Gamma Deck"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0AECGZ65RB",
+          "mode": "list",
+          "cachedResultName": "all-asero"
+        },
+        "text": "=Your proposal for *{{ $('Extract Client Name').item.json.company || $('Extract Client Name').item.json.clientName }}* has been generated and the Gamma deck is ready!\n\nAn email draft has been created for you to review and send.\n\nYou can also view the full presentation here: <a href=\"https://public-api.gamma.app/v1.0/generations/{{ $('Gamma Deck').item.json.generationId }}\">View Proposal</a>",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        720,
+        1904
+      ],
+      "id": "02d452d0-8195-4585-857a-a90bf078a223",
+      "name": "Notification",
+      "webhookId": "d4ad536d-b3f9-414b-b91c-3463688c260e",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "WfEsS1JaedsOnFF7",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://public-api.gamma.app/v1.0/generations/{{ $('Gamma Deck').item.json.generationId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-KEY"
+            },
+            {
+              "name": "accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        1456
+      ],
+      "id": "5b7e2930-086b-4390-b16c-42e81275b27a",
+      "name": "Get Presentation "
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "65e5b886-d623-48cc-83f9-e5339dad11e1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1312,
+        1456
+      ],
+      "id": "f2d68147-d22e-4ece-a74c-8878b8ba572f",
+      "name": "Is the presentation Complete?"
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        928,
+        1456
+      ],
+      "id": "f79f0b31-6d8c-4249-aa1e-5dd663a03f43",
+      "name": "Wait 10s",
+      "webhookId": "ad0486f4-e8df-4d30-ae71-513ce7713a11"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a0cff43b-8e2a-43d1-a3ea-d3950e0e89b6",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1312,
+        576
+      ],
+      "id": "a27f5f0e-05c8-4a07-b9a7-6f4b5c2a82da",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "content": "# 🛠️ Setup Guide  \n**Proposal Generator v2** by [Asero](https://asero.ai)\n\nFollow the steps below to get this workflow up and running:\n\n### ✅ Step 1: Connect Google Drive  \nLink your Google Drive account and set the **Google Drive Trigger** to monitor the folder where your meeting transcripts are saved. This is what kicks off the automation when a new transcript is uploaded.\n\n### ✅ Step 2: Connect Notion CRM  \nConnect your [Notion](https://www.notion.so/) integration and update the **database ID** in the Query CRM nodes to point to your client database. Make sure the database has these fields: `Business Name` (title), `Contact Person` (rich_text), `Email` (email).\n\n### ✅ Step 3: Connect Slack  \nLink your Slack workspace so the workflow can send you a message asking whether you'd like a proposal generated, and notify you when it's complete.\n\n### ✅ Step 4: Add Your OpenRouter API Key  \nConnect your [OpenRouter](https://openrouter.ai/) credential to power the AI agent that generates your proposals.\n\n### ✅ Step 5: Create Your Gamma API Key  \nGenerate an API key from [Gamma](https://gamma.app/) and add it to the HTTP Request node for Gamma. This enables automatic proposal deck creation.\n\n### ✅ Step 6: Connect Gmail  \nLink your Gmail account so the workflow can create email drafts with the proposal ready for you to review and send.\n\n### 💡 How It Works  \nOnce everything is connected, uploading a meeting transcript to your Google Drive folder will automatically extract the client info, query your Notion CRM, and send you a Slack message asking if you want a proposal generated. Say yes, and the AI creates a full proposal, builds a Gamma deck, drafts the email, and updates your CRM — all automatically!",
+        "height": 800,
+        "width": 816
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        368
+      ],
+      "id": "c00b3e51-4a97-4bc8-bba0-a7dfe40449bf",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## 1) Get the Transcript\n- Google Drive Trigger monitors folder for new transcripts\n- Extracts the full text content from the uploaded document\n- Parses the filename and transcript to identify the client company and speakers\n- Sends a Slack message asking if you want a proposal generated\n- Only proceeds if you approve",
+        "height": 416,
+        "width": 1424,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        368
+      ],
+      "id": "046dd860-bb24-4714-ade5-8f6c7f312abe",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## 3) Generate the Proposal\n- AI agent (powered by OpenRouter) analyses the transcript and generates a full proposal\n- Proposal is sent to Gamma API to create a professional presentation deck\n- Polls Gamma until the deck is complete\n- Automatically retries if the presentation is still processing",
+        "height": 512,
+        "width": 1424,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        1248
+      ],
+      "id": "a89e96b8-c7ec-478b-92d3-ae88c187188c",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## 4) Notify & Deliver\n- Sends a Slack notification confirming the proposal is ready\n- Creates a Gmail draft with the proposal for you to review before sending\n- Updates the Notion CRM with the proposal date, URL, and status",
+        "height": 384,
+        "width": 1424,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        1776
+      ],
+      "id": "69d8f7df-a2f6-4835-a1ab-c5be32ca8f97",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## 2) Query the CRM\n- Searches Notion CRM for the client by business name and contact person\n- Checks if the record has complete info (email + company name)\n- If complete → proceeds to proposal generation\n- If missing → sends an alert email with a form to fill in the gaps\n- Once updated, re-queries the CRM and continues",
+        "height": 432,
+        "width": 1424,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        176,
+        800
+      ],
+      "id": "a98a9d65-78e7-44a6-bf26-e70e8f0dcf72",
+      "name": "Sticky Note4"
+    }
+  ],
+  "pinData": {
+    "CRM Data Ready": [
+      {
+        "json": {
+          "id": "309e4600-daf6-8075-91da-c7e1222abb41",
+          "name": "",
+          "url": "https://www.notion.so/309e4600daf6807591dac7e1222abb41",
+          "property_start_date": null,
+          "property_market_research": "Tripr operates in the competitive fashion e-commerce sector, focusing on men's stylish clothing. Although specific recent developments are not readily available, potential areas for technological improvement include customer experience enhancement and supply chain optimization using AI and automation.\n\nOverview: Tripr is an online fashion portal that offers a diverse range of stylish and trendy clothing for men, including designer wear and branded clothes.\nIndustry: Retail, specifically Fashion E-commerce\nRecent News: There is limited publicly available recent news about Tripr, such as funding rounds or new partnerships.\nDigital Presence: Tripr appears to maintain a basic online presence with an e-commerce website offering men's fashion apparel. The quality and sophistication of their website are not detailed in available data.\nCompetitors: Competitors could include other online fashion retailers such as Myntra, Jabong, and Koovs in the same market sector.\nOpportunities: Opportunities for automation and AI could include personalization of customer experiences, inventory management through predictive analytics, and enhancing their digital marketing strategies.",
+          "property_status_1": "Not started",
+          "property_email": "jack.ramsey@asero.ai",
+          "property_service_package": [],
+          "property_important_dates": "",
+          "property_phone_number": null,
+          "property_proposal_date": null,
+          "property_proposal_url": null,
+          "property_ai_summary": "",
+          "property_status": "Not started",
+          "property_link_to_their_folder_assets": null,
+          "property_client_summary": "",
+          "property_contact_person": "Robert Price",
+          "property_business_name": ""
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Transcript": {
+      "main": [
+        [
+          {
+            "node": "Extract Client Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Client Name": {
+      "main": [
+        [
+          {
+            "node": "Proposal Generation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query CRM": {
+      "main": [
+        [
+          {
+            "node": "Has Complete Info?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Complete Info?": {
+      "main": [
+        [
+          {
+            "node": "CRM Data Ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Alert - Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM Data Ready": {
+      "main": [
+        [
+          {
+            "node": "Proposal Generator Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert - Slack": {
+      "main": [
+        [
+          {
+            "node": "Collect Missing Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Missing Info": {
+      "main": [
+        [
+          {
+            "node": "Update Missing Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Missing Info": {
+      "main": [
+        [
+          {
+            "node": "Re-Query CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Query CRM": {
+      "main": [
+        [
+          {
+            "node": "CRM Data Ready",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Email Draft": {
+      "main": [
+        [
+          {
+            "node": "Update CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposal Generation?": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Proposal Generator Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposal Generator Agent": {
+      "main": [
+        [
+          {
+            "node": "Gamma Deck",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gamma Deck": {
+      "main": [
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notification": {
+      "main": [
+        [
+          {
+            "node": "Create Email Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Presentation ": {
+      "main": [
+        [
+          {
+            "node": "Is the presentation Complete?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is the presentation Complete?": {
+      "main": [
+        [
+          {
+            "node": "Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          {
+            "node": "Get Presentation ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Query CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "49517b27-0e94-48d2-899c-638e3c0cf869",
+  "meta": {
+    "instanceId": "55820d289255b4c45953b51b46bebf944c7af8c6ff923d58eb26676dfd664a34"
+  },
+  "id": "y90xZ788qUwJgw4Q",
+  "tags": []
+}
