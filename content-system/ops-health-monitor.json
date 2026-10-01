@@ -1,0 +1,182 @@
+{
+  "name": "Ops — n8n Health Monitor",
+  "nodes": [
+    {
+      "id": "m-cron",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "m-http",
+      "name": "Check Readiness",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://YOUR_N8N_HOST/healthz/readiness",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "m-eval",
+      "name": "Evaluate Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// Decide whether n8n is healthy, and whether this check should raise an alert.\n// State is remembered between runs so a multi-day outage does not send one email\n// every 15 minutes. Re-alerts every 6 hours while still down, and sends one\n// \"recovered\" email when it comes back.\nconst RENOTIFY_HOURS = 6;\nconst item = $input.first().json;\nconst code = item.statusCode;\nconst status = (item.body && item.body.status) || null;\nconst healthy = code === 200 && status === 'ok';\n\nconst store = $getWorkflowStaticData('global');\nconst now = Date.now();\nconst wasDown = store.down === true;\nconst lastAlert = store.lastAlertAt || 0;\nconst hoursSince = (now - lastAlert) / 3600000;\n\nlet alert = false, subject = '', reason = '';\n\nif (!healthy) {\n  reason = code ? `readiness returned ${code} (${status || 'no status'})` : 'no response from n8n';\n  if (!wasDown) { alert = true; subject = 'n8n is DOWN — Content Engine'; }\n  else if (hoursSince >= RENOTIFY_HOURS) { alert = true; subject = `n8n still DOWN (${Math.floor(hoursSince)}h) — Content Engine`; }\n  store.down = true;\n  if (alert) store.lastAlertAt = now;\n} else {\n  if (wasDown) { alert = true; subject = 'n8n RECOVERED — Content Engine'; reason = 'readiness is returning 200 again'; }\n  store.down = false;\n  store.lastAlertAt = 0;\n}\n\nconst body = [\n  subject,\n  '',\n  `Checked: ${'https://YOUR_N8N_HOST/healthz/readiness'}`,\n  `Result: ${reason}`,\n  `Time: ${new Date(now).toISOString()}`,\n  '',\n  healthy ? 'No action needed.' : 'Fix: open Railway, n8n service, and Redeploy. Nothing is lost — workflows and data live in separate services.',\n].join('\\n');\n\nreturn [{ json: { alert, healthy, subject, body, reason } }];\n"
+      }
+    },
+    {
+      "id": "m-if",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.alert }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "m-mail",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1140,
+        220
+      ],
+      "parameters": {
+        "fromEmail": "you@example.com",
+        "toEmail": "you@example.com",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.body }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "m-noop",
+      "name": "No Alert Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        400
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Check Readiness",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Readiness": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Health": {
+      "main": [
+        [
+          {
+            "node": "Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Needed?": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Alert Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

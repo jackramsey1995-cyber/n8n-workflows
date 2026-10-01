@@ -1,0 +1,725 @@
+{
+  "name": "Workflow A — Story Extraction",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "extract-stories",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wha-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst required = ['request_id', 'transcript_id', 'brand_id', 'raw_text'];\nconst missing = required.filter(f => !body[f]);\nif (missing.length > 0) {\n  return [{ json: { valid: false, error: 'Missing fields: ' + missing.join(', '), request_id: body.request_id || null } }];\n}\nreturn [{ json: { valid: true, request_id: body.request_id, transcript_id: body.transcript_id, brand_id: body.brand_id, raw_text: body.raw_text } }];"
+      },
+      "id": "wha-validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wha-if-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        656,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error, request_id: $json.request_id }) }}",
+        "options": {}
+      },
+      "id": "wha-r400-invalid",
+      "name": "Respond 400 Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "brands",
+        "returnAll": true,
+        "filterType": "string",
+        "filterString": "=id=eq.{{ $json.brand_id }}"
+      },
+      "id": "wha-fetch-brand",
+      "name": "Fetch Brand",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        864,
+        160
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wha-if-brand",
+      "name": "Brand Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1056,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Brand not found', brand_id: $('Validate Input').first().json.brand_id }) }}",
+        "options": {}
+      },
+      "id": "wha-r400-brand",
+      "name": "Respond 400 Brand Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1264,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const brand = $input.first().json;\nconst validated = $('Validate Input').first().json;\nconst icpContext = brand.icp_description ? 'Target audience: ' + brand.icp_description : '';\nconst voiceContext = brand.voice_rules ? 'Brand voice rules: ' + brand.voice_rules : '';\nconst lowContext = !brand.voice_rules || !brand.banned_patterns || !brand.gold_examples;\nconst systemPrompt = 'You are an expert content strategist. Extract distinct, usable stories from the interview transcript below.\\n\\n' + icpContext + '\\n' + voiceContext + '\\n\\n' + 'Return ONLY a valid JSON array of story objects. No markdown, no explanation, just the JSON array.\\n\\n' + 'Each story object must have exactly these fields:\\n' + '- title: string (concise, 5-10 words)\\n' + '- summary: string (2-4 sentences expanding on the story)\\n' + '- label: one of: insight | decision | failure_pattern | result | framework\\n' + '- source_quote: string (direct verbatim quote from the transcript supporting this story)\\n\\n' + 'Aim for 3-8 stories. Only include stories with clear narrative value.';\nreturn [{ json: { brand_id: brand.id, transcript_id: validated.transcript_id, request_id: validated.request_id, raw_text: validated.raw_text, low_context: lowContext, systemPrompt, attempt: 1 } }];"
+      },
+      "id": "wha-build-prompt",
+      "name": "Build Extraction Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.raw_text }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "id": "wha-claude-extract",
+      "name": "Claude Extract",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1456,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-4.6",
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.3
+        }
+      },
+      "id": "wha-claude-extract-model",
+      "name": "Claude Extract Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1456,
+        256
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_ME",
+          "name": "OpenRouter (native)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst prompt = $('Build Extraction Prompt').first().json;\nconst raw = response.output || (response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.content) || response.text || (response.content && response.content[0] && response.content[0].text) || '';\nlet stories = [], parseOk = false;\ntry {\n  const cleaned = raw.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/```\\s*$/i,'').trim();\n  const parsed = JSON.parse(cleaned);\n  stories = Array.isArray(parsed) ? parsed : (parsed.stories || []);\n  const validLabels = ['insight','decision','failure_pattern','result','framework'];\n  stories = stories.filter(s => s.title && s.summary && validLabels.includes(s.label));\n  parseOk = stories.length > 0;\n} catch(e) {}\nreturn [{ json: { parseOk, stories, raw_llm_response: raw, brand_id: prompt.brand_id, transcript_id: prompt.transcript_id, request_id: prompt.request_id, low_context: prompt.low_context, attempt: prompt.attempt, systemPrompt: prompt.systemPrompt, raw_text: prompt.raw_text } }];"
+      },
+      "id": "wha-parse",
+      "name": "Parse Stories JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "id": "wha-wait",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2064,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.raw_text }}",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt + '\\n\\nCRITICAL: Respond with ONLY a valid JSON array. Start with [ end with ]. No other text.' }}"
+        }
+      },
+      "id": "wha-claude-retry",
+      "name": "Claude Retry",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2256,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-4.6",
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.1
+        }
+      },
+      "id": "wha-claude-retry-model",
+      "name": "Claude Retry Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2256,
+        464
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_ME",
+          "name": "OpenRouter (native)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst prev = $('Parse Stories JSON').first().json;\nconst raw = response.output || (response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.content) || response.text || (response.content && response.content[0] && response.content[0].text) || '';\nlet stories = [], parseOk = false;\ntry {\n  const cleaned = raw.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/```\\s*$/i,'').trim();\n  const parsed = JSON.parse(cleaned);\n  stories = Array.isArray(parsed) ? parsed : (parsed.stories || []);\n  const validLabels = ['insight','decision','failure_pattern','result','framework'];\n  stories = stories.filter(s => s.title && s.summary && validLabels.includes(s.label));\n  parseOk = stories.length > 0;\n} catch(e) {}\nreturn [{ json: { parseOk, stories, brand_id: prev.brand_id, transcript_id: prev.transcript_id, request_id: prev.request_id, low_context: prev.low_context } }];"
+      },
+      "id": "wha-parse-retry",
+      "name": "Parse Retry JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2624,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "transcripts",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.transcript_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "extraction_failed"
+            }
+          ]
+        }
+      },
+      "id": "wha-mark-failed",
+      "name": "Mark Extraction Failed",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2864,
+        400
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Story extraction failed after 2 attempts', transcript_id: $('Parse Retry JSON').first().json.transcript_id }) }}",
+        "options": {}
+      },
+      "id": "wha-r422",
+      "name": "Respond 422 Extraction Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3056,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nfunction similarity(a, b) {\n  const s1 = a.toLowerCase().split(' '), s2 = b.toLowerCase().split(' ');\n  const set2 = new Set(s2);\n  const intersection = s1.filter(w => set2.has(w)).length;\n  const union = new Set([...s1, ...s2]).size;\n  return union === 0 ? 0 : intersection / union;\n}\nconst unique = [];\nfor (const story of data.stories) {\n  if (!unique.some(u => similarity(u.title, story.title) > 0.9)) unique.push(story);\n}\nreturn [{ json: { stories: unique, story_count: unique.length, brand_id: data.brand_id, transcript_id: data.transcript_id, request_id: data.request_id, low_context: data.low_context } }];"
+      },
+      "id": "wha-dedup",
+      "name": "Deduplicate Stories",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "stories",
+        "include": "selectedOtherFields",
+        "fieldsToInclude": "brand_id,transcript_id,request_id,low_context,story_count",
+        "options": {}
+      },
+      "id": "wha-split",
+      "name": "Split Out Stories",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        2256,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "tableId": "stories",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "transcript_id",
+              "fieldValue": "={{ $json.transcript_id }}"
+            },
+            {
+              "fieldId": "brand_id",
+              "fieldValue": "={{ $json.brand_id }}"
+            },
+            {
+              "fieldId": "title",
+              "fieldValue": "={{ $json.stories.title }}"
+            },
+            {
+              "fieldId": "summary",
+              "fieldValue": "={{ $json.stories.summary }}"
+            },
+            {
+              "fieldId": "label",
+              "fieldValue": "={{ $json.stories.label }}"
+            },
+            {
+              "fieldId": "source_quote",
+              "fieldValue": "={{ $json.stories.source_quote }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "new"
+            }
+          ]
+        }
+      },
+      "id": "wha-insert",
+      "name": "Insert Story",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        64
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst stories = items.map(i => ({ id: i.json.id, title: i.json.title, label: i.json.label }));\nconst first = items[0].json;\nreturn [{ json: { story_count: stories.length, stories, transcript_id: first.transcript_id, request_id: first.request_id } }];"
+      },
+      "id": "wha-agg",
+      "name": "Aggregate Story IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2656,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "transcripts",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.transcript_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "extracted"
+            }
+          ]
+        }
+      },
+      "id": "wha-update-tx",
+      "name": "Update Transcript Extracted",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2864,
+        64
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ story_count: $('Aggregate Story IDs').first().json.story_count, stories: $('Aggregate Story IDs').first().json.stories }) }}",
+        "options": {}
+      },
+      "id": "wha-r200",
+      "name": "Respond 200 Stories",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3056,
+        64
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Brand",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Brand": {
+      "main": [
+        [
+          {
+            "node": "Brand Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brand Exists?": {
+      "main": [
+        [
+          {
+            "node": "Build Extraction Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 Brand Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Extraction Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Claude Extract",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Retry Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Claude Retry",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract": {
+      "main": [
+        [
+          {
+            "node": "Parse Stories JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Stories JSON": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Stories",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 10s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          {
+            "node": "Claude Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Retry": {
+      "main": [
+        [
+          {
+            "node": "Parse Retry JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Retry JSON": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Stories",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Extraction Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Extraction Failed": {
+      "main": [
+        [
+          {
+            "node": "Respond 422 Extraction Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Stories": {
+      "main": [
+        [
+          {
+            "node": "Split Out Stories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out Stories": {
+      "main": [
+        [
+          {
+            "node": "Insert Story",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Story": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Story IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Story IDs": {
+      "main": [
+        [
+          {
+            "node": "Update Transcript Extracted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Transcript Extracted": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Stories",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}

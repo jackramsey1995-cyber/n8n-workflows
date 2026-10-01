@@ -1,0 +1,894 @@
+{
+  "name": "Workflow B — Content Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-content",
+        "options": {}
+      },
+      "id": "whb-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        256,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst required = ['request_id', 'story_id', 'brand_id'];\nconst missing = required.filter(f => !body[f]);\nif (missing.length > 0) return [];\nconst ALL = ['linkedin_post','blog','video_guide','carousel'];\nlet formats = Array.isArray(body.formats) && body.formats.length ? body.formats.filter(f => ALL.includes(f)) : ALL;\nif (!formats.length) formats = ALL;\nreturn [{ json: { request_id: body.request_id, story_id: body.story_id, brand_id: body.brand_id, formats } }];"
+      },
+      "id": "whb-validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "stories",
+        "returnAll": true,
+        "filterType": "string",
+        "filterString": "=id=eq.{{ $json.story_id }}"
+      },
+      "id": "whb-fetch-story",
+      "name": "Fetch Story",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        656,
+        160
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "brands",
+        "returnAll": true,
+        "filterType": "string",
+        "filterString": "=id=eq.{{ $('Validate Input').first().json.brand_id }}"
+      },
+      "id": "whb-fetch-brand",
+      "name": "Fetch Brand",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        656,
+        464
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "whb-merge",
+      "name": "Merge Story + Brand",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        864,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "whb-if-story",
+      "name": "Story Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1056,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const story = $('Fetch Story').first().json;\nconst brand = $input.first().json;\nconst requested_formats = $('Validate Input').first().json.formats || ['linkedin_post','blog','video_guide','carousel'];\nconst lowContext = !brand.voice_rules || !brand.banned_patterns ||   !brand.gold_examples || Object.keys(brand.gold_examples || {}).length === 0;\nreturn [{ json: {\n  requested_formats,\n  story_id: story.id,\n  brand_id: brand.id,\n  story_title: story.title,\n  story_summary: story.summary,\n  source_quote: story.source_quote,\n  voice_rules: brand.voice_rules || '',\n  banned_patterns: brand.banned_patterns || [],\n  gold_examples: brand.gold_examples || {},\n  icp_description: brand.icp_description || '',\n  colour_primary: brand.colour_primary || '#000000',\n  colour_secondary: brand.colour_secondary || '#ffffff',\n  colour_accent: brand.colour_accent || '#0066cc',\n  low_context: lowContext\n} }];"
+      },
+      "id": "whb-brief",
+      "name": "Compile Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "content_pieces",
+        "returnAll": true,
+        "filterType": "string",
+        "filterString": "=story_id=eq.{{ $json.story_id }}"
+      },
+      "id": "whb-fetch-existing",
+      "name": "Fetch Existing Pieces",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "alwaysOutputData": true,
+      "position": [
+        1392,
+        192
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const brief = $('Compile Brief').first().json;\nconst ALL = ['linkedin_post','blog','video_guide','carousel'];\nconst requested = (brief.requested_formats && brief.requested_formats.length) ? brief.requested_formats : ALL;\nconst existing = new Set($('Fetch Existing Pieces').all().map(i => i.json && i.json.format).filter(Boolean));\nconst toGenerate = requested.filter(f => !existing.has(f));\nconst base = 'You are a professional content writer.\\n\\n'  + 'STORY TITLE: ' + brief.story_title + '\\n'  + 'STORY SUMMARY: ' + brief.story_summary + '\\n'  + 'SOURCE QUOTE: ' + brief.source_quote + '\\n\\n'  + (brief.voice_rules ? 'BRAND VOICE RULES: ' + brief.voice_rules + '\\n\\n' : '')  + (brief.icp_description ? 'TARGET AUDIENCE: ' + brief.icp_description + '\\n\\n' : '')  + 'SOUND HUMAN, NOT AI-GENERATED. Follow these rules strictly:\\n'  + '- Never use em dashes. Use commas, colons or full stops instead.\\n'  + '- Never use these words or phrases: delve, tapestry, testament, moreover, furthermore, seamless, robust, elevate, unlock, embark, realm, foster, underscore, pivotal, meticulous, navigate the landscape, in todays fast-paced world, at the end of the day, in conclusion, when it comes to.\\n'  + '- Avoid the formulaic setup of stating what something is not, only to flip to what it is; and avoid the pattern of calling something not just one thing but another.\\n'  + '- Vary sentence length and structure. Do not begin consecutive sentences the same way. Do not force every list into three items.\\n'  + '- No emoji. No hashtag stuffing. No tidy summary paragraph that just restates the point.\\n'  + '- Write the way a sharp founder would actually talk to a smart peer, with specifics over adjectives.\\n\\n';\n\nconst formats = [\n  {\n    format: 'linkedin_post',\n    systemPrompt: base + (brief.gold_examples.linkedin_post && brief.gold_examples.linkedin_post.length ? 'GOLD EXAMPLES:\\n' + brief.gold_examples.linkedin_post.slice(0,3).join('\\n---\\n') + '\\n\\n' : '')\n      + 'Write a LinkedIn post. Hook-led opening, 150-250 words, first-person founder voice. Plain text only, no hashtags unless natural.'\n  },\n  {\n    format: 'blog',\n    systemPrompt: base + (brief.gold_examples.blog && brief.gold_examples.blog.length ? 'GOLD EXAMPLES:\\n' + brief.gold_examples.blog.slice(0,3).join('\\n---\\n') + '\\n\\n' : '')\n      + 'Write a long-form blog post. 800-1200 words. Include a headline, introduction, 3-4 subheadings with body paragraphs, and a conclusion.'\n  },\n  {\n    format: 'video_guide',\n    systemPrompt: base + (brief.gold_examples.video_guide && brief.gold_examples.video_guide.length ? 'GOLD EXAMPLES:\\n' + brief.gold_examples.video_guide.slice(0,3).join('\\n---\\n') + '\\n\\n' : '')\n      + 'Write a video guide for the founder to record. Include: hook (first 10 seconds), 3-5 key points with talking points under each, and a closing call to action. Plain text, easy to read off-camera.'\n  },\n  {\n    format: 'carousel',\n    systemPrompt: base + (brief.gold_examples.carousel && brief.gold_examples.carousel.length ? 'GOLD EXAMPLES:\\n' + JSON.stringify(brief.gold_examples.carousel.slice(0,2)) + '\\n\\n' : '')\n      + 'Return ONLY a valid JSON object with this exact structure: { \"cover\": { \"headline\": \"...\", \"subheadline\": \"...\" }, \"slides\": [ { \"headline\": \"...\", \"body\": \"...\" } ] }. Include 6-8 slides. These render as image slides, so keep text short: cover headline max 8 words, cover subheadline max 12 words, each slide headline max 8 words, each slide body max 15 words. Punchy and concrete, no filler. No text outside the JSON.'\n  }\n];\n\nreturn formats.filter(f => toGenerate.includes(f.format)).map(f => ({ json: {\n  ...f,\n  story_id: brief.story_id,\n  brand_id: brief.brand_id,\n  colour_primary: brief.colour_primary,\n  colour_secondary: brief.colour_secondary,\n  colour_accent: brief.colour_accent,\n  banned_patterns: brief.banned_patterns,\n  low_context: brief.low_context\n} }));"
+      },
+      "id": "whb-formats",
+      "name": "Create Format Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "Write this content piece now.",
+        "options": {
+          "systemMessage": "={{ $json.systemPrompt }}"
+        }
+      },
+      "id": "whb-generate",
+      "name": "Generate Content",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1680,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-4.6",
+        "options": {
+          "maxTokens": 4096,
+          "temperature": 0.7
+        }
+      },
+      "id": "whb-generate-model",
+      "name": "Generate Content Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        336
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_ME",
+          "name": "OpenRouter (native)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const gens = $input.all();\nconst srcs = $('Create Format Items').all();\nreturn gens.map((g, idx) => {\n  const src = srcs[idx].json;\n  const format = src.format;\n  let raw = g.json.output || (g.json.choices && g.json.choices[0] && g.json.choices[0].message && g.json.choices[0].message.content) || (g.json.content && g.json.content[0] && g.json.content[0].text) || g.json.text || '';\n  raw = raw.replace(/\\s*[\\u2014\\u2013]\\s*/g, ', ');\n  let body_text = raw;\n  let carousel_json = null;\n  if (format === 'carousel') {\n    try {\n      const cleaned = raw.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/```\\s*$/i,'').trim();\n      carousel_json = JSON.parse(cleaned);\n      body_text = JSON.stringify(carousel_json);\n    } catch(e) { body_text = raw; }\n  }\n  return { json: {\n    format, body_text, carousel_json,\n    story_id: src.story_id,\n    brand_id: src.brand_id,\n    colour_primary: src.colour_primary,\n    colour_secondary: src.colour_secondary,\n    colour_accent: src.colour_accent,\n    banned_patterns: src.banned_patterns,\n    low_context: src.low_context\n  } };\n});"
+      },
+      "id": "whb-process",
+      "name": "Process Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.format }}",
+              "rightValue": "carousel",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "whb-if-carousel",
+      "name": "Carousel Format?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2096,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $input.first().json;\nconst cj = c.carousel_json || {};\nconst stamp = Date.now();\n// hex -> plain-English colour description, so each brand's own palette drives the\n// slide design without ever printing a hex code onto the image.\nfunction describe(hex){\n  hex = (hex||'').replace('#','').trim();\n  if (hex.length===3) hex = hex.split('').map(x=>x+x).join('');\n  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return 'neutral grey';\n  const r=parseInt(hex.slice(0,2),16)/255, g=parseInt(hex.slice(2,4),16)/255, b=parseInt(hex.slice(4,6),16)/255;\n  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, d=mx-mn;\n  const sat = d===0 ? 0 : d/(1-Math.abs(2*l-1));\n  let h=0;\n  if (d!==0){ if(mx===r) h=((g-b)/d)%6; else if(mx===g) h=(b-r)/d+2; else h=(r-g)/d+4; h*=60; if(h<0) h+=360; }\n  if (sat<0.18){\n    if(l<0.15) return 'near-black charcoal';\n    if(l<0.35) return 'dark charcoal grey';\n    if(l<0.62) return 'medium grey';\n    if(l<0.85) return 'soft light grey';\n    return 'off-white';\n  }\n  const fam = h<15?'red':h<45?'orange':h<70?'amber yellow':h<95?'lime green':h<150?'green':h<185?'teal':h<215?'sky blue':h<255?'blue':h<280?'indigo':h<320?'purple':h<345?'magenta pink':'red';\n  if ((fam==='blue'||fam==='sky blue') && l<0.32) return 'deep navy blue';\n  const lw = l<0.2?'very dark ':l<0.38?'deep ':l<0.6?'':l<0.78?'light ':'pale ';\n  const sw = sat<0.35?'muted ':sat>0.72?'vivid ':'';\n  return (lw+sw+fam).trim();\n}\nconst bg = describe(c.colour_accent || '#0B1F3A');\nconst hl = describe(c.colour_primary || '#2D6CDF');\nconst bd = describe(c.colour_secondary || '#CFD4DB');\nconst slides = [];\nif (cj.cover) slides.push({ kind:'cover', headline: cj.cover.headline || '', body: cj.cover.subheadline || '' });\n(cj.slides || []).forEach(s => slides.push({ kind:'slide', headline: s.headline || '', body: s.body || '' }));\nreturn slides.map((s, i) => {\n  const prompt = 'Design a single LinkedIn/Instagram carousel ' + (s.kind==='cover'?'COVER ':'') +\n    'slide as a finished, ready-to-post PORTRAIT 4:5 graphic (taller than wide). Clean modern professional B2B design. ' +\n    'Colour scheme: ' + bg + ' background, a bold ' + hl + ' for the headline, and ' + bd + ' for the body text. ' +\n    'Render ONLY the exact headline and body text given below - no other words, labels, codes, captions or watermarks. Spell every word exactly and correctly.\\n' +\n    'HEADLINE: ' + s.headline + '\\nBODY: ' + s.body + '\\n' +\n    'Generous margins, strong typographic hierarchy, heavy sans-serif headline, lighter body beneath. ' +\n    'Subtle geometric accent in ' + hl + '. No logos, no photographs of people. High contrast, perfectly legible spelling, uncluttered.';\n  return { json: {\n    slide_index: i, n_slides: slides.length,\n    prompt, path: c.story_id + '/' + stamp + '-' + i + '.png',\n    format:'carousel', body_text: c.body_text, carousel_json: c.carousel_json,\n    story_id: c.story_id, brand_id: c.brand_id,\n    colour_primary: c.colour_primary, colour_secondary: c.colour_secondary, colour_accent: c.colour_accent,\n    banned_patterns: c.banned_patterns, low_context: c.low_context\n  } };\n});"
+      },
+      "id": "whb-explode",
+      "name": "Explode Slides",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2256,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents:[{ parts:[{ text: $json.prompt }] }], generationConfig:{ imageConfig:{ aspectRatio:'4:5' } } }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "whb-render-slide",
+      "name": "Render Slide",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2464,
+        64
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Google AI Studio account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const gens = $input.all();\nconst src = $('Explode Slides').all();\nreturn gens.map((g, i) => {\n  const s = src[i].json;\n  const parts = ((((g.json.candidates || [])[0] || {}).content || {}).parts) || [];\n  const img = parts.find(p => p.inlineData);\n  const out = { json: { ...s, rendered: !!img } };\n  if (img) out.binary = { data: { data: img.inlineData.data, mimeType:'image/png', fileName: s.path.split('/').pop() } };\n  return out;\n});"
+      },
+      "id": "whb-attach-bin",
+      "name": "Attach Slide Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2656,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://YOUR_PROJECT.supabase.co/storage/v1/object/carousels/{{ $json.path }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "whb-upload-slide",
+      "name": "Upload Slide",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2864,
+        64
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ups = $input.all();\nconst src = $('Attach Slide Binary').all();\nconst base = src[0].json;\nconst PUB = 'https://YOUR_PROJECT.supabase.co/storage/v1/object/public/';\nconst urls = [];\nups.forEach((u, i) => {\n  const key = u.json && u.json.Key;\n  if (key && src[i].json.rendered) urls.push(PUB + key);\n});\nreturn [{ json: {\n  format:'carousel', body_text: base.body_text, carousel_json: base.carousel_json,\n  story_id: base.story_id, brand_id: base.brand_id,\n  colour_primary: base.colour_primary, colour_secondary: base.colour_secondary, colour_accent: base.colour_accent,\n  banned_patterns: base.banned_patterns, low_context: base.low_context,\n  carousel_image_urls: urls,\n  carousel_partial: urls.length < src.length\n} }];"
+      },
+      "id": "whb-collapse",
+      "name": "Collapse Carousel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3056,
+        64
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "whb-merge2",
+      "name": "Merge All Formats",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2528,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nreturn items.map(item => {\n  const d = item.json;\n  const patterns = d.banned_patterns || [];\n  const body = (d.body_text || '').toLowerCase();\n  const flagged = patterns.filter(p => body.includes(p.toLowerCase()));\n  return { json: { ...d, banned_flag: flagged.length > 0, banned_matches: flagged } };\n});"
+      },
+      "id": "whb-banned",
+      "name": "Banned Patterns Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'CONTENT:\\n' + $json.body_text }}",
+        "options": {
+          "systemMessage": "You are a content quality assessor. Score the following content piece 1-10 against brand voice quality. Return ONLY a JSON object: { \"score\": <number>, \"reason\": \"<one sentence>\" }"
+        }
+      },
+      "id": "whb-score",
+      "name": "Quality Score",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        2912,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-4.6",
+        "options": {
+          "maxTokens": 256,
+          "temperature": 0.1
+        }
+      },
+      "id": "whb-score-model",
+      "name": "Quality Score Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2880,
+        496
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_ME",
+          "name": "OpenRouter (native)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const scores = $input.all();\nconst pieces = $('Banned Patterns Check').all();\nreturn scores.map((s, idx) => {\n  const d = pieces[idx].json;\n  const raw = s.json.output || (s.json.choices && s.json.choices[0] && s.json.choices[0].message && s.json.choices[0].message.content) || (s.json.content && s.json.content[0] && s.json.content[0].text) || s.json.text || '';\n  let quality_score = 0;\n  try {\n    const cleaned = raw.replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/```\\s*$/i,'').trim();\n    quality_score = JSON.parse(cleaned).score || 0;\n  } catch(e) {}\n  const low_quality = quality_score < 6;\n  const status = low_quality ? 'low_quality' : 'draft';\n  return { json: {\n    format: d.format,\n    body_text: d.body_text,\n    story_id: d.story_id,\n    brand_id: d.brand_id,\n    quality_score,\n    status,\n    low_quality,\n    low_context: d.low_context,\n    carousel_partial: d.carousel_partial || false,\n    carousel_image_urls: d.carousel_image_urls || [],\n    banned_flag: d.banned_flag || false\n  } };\n});"
+      },
+      "id": "whb-quality",
+      "name": "Apply Quality Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3232,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "tableId": "content_pieces",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "story_id",
+              "fieldValue": "={{ $json.story_id }}"
+            },
+            {
+              "fieldId": "brand_id",
+              "fieldValue": "={{ $json.brand_id }}"
+            },
+            {
+              "fieldId": "format",
+              "fieldValue": "={{ $json.format }}"
+            },
+            {
+              "fieldId": "body_text",
+              "fieldValue": "={{ $json.body_text }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $json.status }}"
+            },
+            {
+              "fieldId": "quality_score",
+              "fieldValue": "={{ $json.quality_score }}"
+            },
+            {
+              "fieldId": "low_context",
+              "fieldValue": "={{ $json.low_context }}"
+            },
+            {
+              "fieldId": "low_quality",
+              "fieldValue": "={{ $json.low_quality }}"
+            },
+            {
+              "fieldId": "carousel_partial",
+              "fieldValue": "={{ $json.carousel_partial }}"
+            },
+            {
+              "fieldId": "carousel_image_urls",
+              "fieldValue": "={{ $json.carousel_image_urls || [] }}"
+            }
+          ]
+        }
+      },
+      "id": "whb-insert",
+      "name": "Insert Content Piece",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3424,
+        304
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst content_piece_ids = items.map(i => i.json.id);\nconst story_id = items[0].json.story_id;\nconst ALL = ['linkedin_post','blog','video_guide','carousel'];\nconst existing = $('Fetch Existing Pieces').all().map(i => i.json && i.json.format).filter(Boolean);\nconst generated = items.map(i => i.json.format);\nconst total = new Set([...existing, ...generated]);\nconst story_status = total.size >= ALL.length ? 'processed' : 'new';\nreturn [{ json: { story_id, content_piece_ids, story_status } }];"
+      },
+      "id": "whb-agg",
+      "name": "Aggregate Piece IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3632,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "stories",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.story_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $json.story_status }}"
+            }
+          ]
+        }
+      },
+      "id": "whb-update-story",
+      "name": "Update Story Processed",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3840,
+        304
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR_APP_HOST/api/n8n/callback",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ request_id: $('Validate Input').first().json.request_id, type: 'generate-content', status: 'completed', story_id: $('Aggregate Piece IDs').first().json.story_id, content_piece_ids: $('Aggregate Piece IDs').first().json.content_piece_ids }) }}",
+        "options": {}
+      },
+      "id": "whb-notify",
+      "name": "Notify Replit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        4032,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Webhook Auth"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Story",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Brand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Story": {
+      "main": [
+        [
+          {
+            "node": "Merge Story + Brand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Brand": {
+      "main": [
+        [
+          {
+            "node": "Merge Story + Brand",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Story + Brand": {
+      "main": [
+        [
+          {
+            "node": "Story Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Story Valid?": {
+      "main": [
+        [
+          {
+            "node": "Compile Brief",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Compile Brief": {
+      "main": [
+        [
+          {
+            "node": "Fetch Existing Pieces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Existing Pieces": {
+      "main": [
+        [
+          {
+            "node": "Create Format Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Format Items": {
+      "main": [
+        [
+          {
+            "node": "Generate Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Content Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Content",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Score Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Quality Score",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Content": {
+      "main": [
+        [
+          {
+            "node": "Process Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Content": {
+      "main": [
+        [
+          {
+            "node": "Carousel Format?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carousel Format?": {
+      "main": [
+        [
+          {
+            "node": "Explode Slides",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge All Formats",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Explode Slides": {
+      "main": [
+        [
+          {
+            "node": "Render Slide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Slide": {
+      "main": [
+        [
+          {
+            "node": "Attach Slide Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Slide Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload Slide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Slide": {
+      "main": [
+        [
+          {
+            "node": "Collapse Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collapse Carousel": {
+      "main": [
+        [
+          {
+            "node": "Merge All Formats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Formats": {
+      "main": [
+        [
+          {
+            "node": "Banned Patterns Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Banned Patterns Check": {
+      "main": [
+        [
+          {
+            "node": "Quality Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Score": {
+      "main": [
+        [
+          {
+            "node": "Apply Quality Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Quality Logic": {
+      "main": [
+        [
+          {
+            "node": "Insert Content Piece",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Content Piece": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Piece IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Piece IDs": {
+      "main": [
+        [
+          {
+            "node": "Update Story Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Story Processed": {
+      "main": [
+        [
+          {
+            "node": "Notify Replit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}

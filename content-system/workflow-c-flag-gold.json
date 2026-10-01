@@ -1,0 +1,197 @@
+{
+  "name": "Workflow C — Flag Gold",
+  "nodes": [
+    {
+      "id": "whc-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ],
+      "parameters": {
+        "path": "flag-gold",
+        "httpMethod": "POST",
+        "responseMode": "onReceived",
+        "options": {},
+        "authentication": "none"
+      }
+    },
+    {
+      "id": "whc-validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        450,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body = $input.first().json.body;\nif (!body || !body.content_piece_id) return [];\nreturn [{ json: { content_piece_id: body.content_piece_id } }];"
+      }
+    },
+    {
+      "id": "whc-fetch-piece",
+      "name": "Fetch Content Piece",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "content_pieces",
+        "filterType": "string",
+        "filterString": "=id=eq.{{ $json.content_piece_id }}",
+        "returnAll": true,
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "whc-fetch-brand",
+      "name": "Fetch Brand",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "brands",
+        "filterType": "string",
+        "filterString": "=id=eq.{{ $json.brand_id }}",
+        "returnAll": true,
+        "options": {}
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "whc-build",
+      "name": "Build Updated Gold Examples",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1050,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const piece = $('Fetch Content Piece').first().json;\nconst brand = $('Fetch Brand').first().json;\n\nconst format = piece.format;\nconst body_text = piece.body_text;\n\n// Parse gold_examples — Supabase may return it as string or object\nlet gold = brand.gold_examples;\nif (typeof gold === 'string') { try { gold = JSON.parse(gold); } catch(e) { gold = {}; } }\nif (!gold || typeof gold !== 'object') gold = {};\n\n// Ensure the format key exists as array\nif (!Array.isArray(gold[format])) gold[format] = [];\n\n// Append new gold example\ngold[format].push(body_text);\n\n// Cap at 5 — evict oldest (shift)\nif (gold[format].length > 5) gold[format] = gold[format].slice(-5);\n\nreturn [{ json: {\n  brand_id: brand.id,\n  gold_examples_updated: JSON.stringify(gold),\n  format,\n  content_piece_id: piece.id\n} }];"
+      }
+    },
+    {
+      "id": "whc-update",
+      "name": "Update Brand Gold Examples",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1250,
+        300
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "brands",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.brand_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "gold_examples",
+              "fieldValue": "={{ $json.gold_examples_updated }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Content Piece",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Content Piece": {
+      "main": [
+        [
+          {
+            "node": "Fetch Brand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Brand": {
+      "main": [
+        [
+          {
+            "node": "Build Updated Gold Examples",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Updated Gold Examples": {
+      "main": [
+        [
+          {
+            "node": "Update Brand Gold Examples",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
